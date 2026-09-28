@@ -10,6 +10,11 @@ import nox
 
 nox.options.error_on_missing_interpreters = True
 
+# Time-machines PyPI index URL for reproducible builds
+TIME_MACHINES_INDEX_URL = (
+    "https://:2024-09-20T00:00:00.000000Z@time-machines-pypi.sealsecurity.io/"
+)
+
 
 def tests_impl(
     session: nox.Session,
@@ -37,8 +42,17 @@ def tests_impl(
         extras = extras.replace(",zstd", "")
 
     # Install deps and the package itself.
-    session.install("-r", "dev-requirements.txt")
-    session.install(f".[{extras}]")
+    session.install(
+        "--index-url",
+        TIME_MACHINES_INDEX_URL,
+        f".[{extras}]",
+    )
+    session.install(
+        "--index-url",
+        TIME_MACHINES_INDEX_URL,
+        "-r",
+        "dev-requirements.txt",
+    )
 
     # Show the pip version.
     session.run("pip", "--version")
@@ -125,7 +139,11 @@ def test_brotlipy(session: nox.Session) -> None:
     """Check that if 'brotlipy' is installed instead of 'brotli' or
     'brotlicffi' that we still don't blow up.
     """
-    session.install("brotlipy")
+    session.install(
+        "--index-url",
+        TIME_MACHINES_INDEX_URL,
+        "brotlipy",
+    )
     tests_impl(session, extras="socks", byte_string_comparisons=False)
 
 
@@ -159,7 +177,12 @@ def downstream_botocore(session: nox.Session) -> None:
     session.run("python", "scripts/ci/install")
 
     session.cd(root)
-    session.install(".", silent=False)
+    session.install(
+        "--index-url",
+        TIME_MACHINES_INDEX_URL,
+        ".",
+        silent=False,
+    )
     session.cd(f"{tmp_dir}/botocore")
 
     session.run("python", "-c", "import urllib3; print(urllib3.__version__)")
@@ -175,11 +198,27 @@ def downstream_requests(session: nox.Session) -> None:
     git_clone(session, "https://github.com/psf/requests")
     session.chdir("requests")
     session.run("git", "rev-parse", "HEAD", external=True)
-    session.install(".[socks]", silent=False)
-    session.install("-r", "requirements-dev.txt", silent=False)
+    session.install(
+        "--index-url",
+        TIME_MACHINES_INDEX_URL,
+        ".[socks]",
+        silent=False,
+    )
+    session.install(
+        "--index-url",
+        TIME_MACHINES_INDEX_URL,
+        "-r",
+        "requirements-dev.txt",
+        silent=False,
+    )
 
     session.cd(root)
-    session.install(".", silent=False)
+    session.install(
+        "--index-url",
+        TIME_MACHINES_INDEX_URL,
+        ".",
+        silent=False,
+    )
     session.cd(f"{tmp_dir}/requests")
 
     session.run("python", "-c", "import urllib3; print(urllib3.__version__)")
@@ -194,7 +233,11 @@ def format(session: nox.Session) -> None:
 
 @nox.session(python="3.12")
 def lint(session: nox.Session) -> None:
-    session.install("pre-commit")
+    session.install(
+        "--index-url",
+        TIME_MACHINES_INDEX_URL,
+        "pre-commit",
+    )
     session.run("pre-commit", "run", "--all-files")
 
     mypy(session)
@@ -203,7 +246,11 @@ def lint(session: nox.Session) -> None:
 @nox.session(python="3.11")
 def pyodideconsole(session: nox.Session) -> None:
     # build wheel into dist folder
-    session.install("build")
+    session.install(
+        "--index-url",
+        TIME_MACHINES_INDEX_URL,
+        "build",
+    )
     session.run("python", "-m", "build")
     session.run(
         "cp",
@@ -223,7 +270,12 @@ def pyodideconsole(session: nox.Session) -> None:
 @nox.parametrize("runner", ["firefox", "chrome"])
 def emscripten(session: nox.Session, runner: str) -> None:
     """Test on Emscripten with Pyodide & Chrome / Firefox"""
-    session.install("-r", "emscripten-requirements.txt")
+    session.install(
+        "--index-url",
+        TIME_MACHINES_INDEX_URL,
+        "-r",
+        "emscripten-requirements.txt",
+    )
     # build wheel into dist folder
     session.run("python", "-m", "build")
     # make sure we have a dist dir for pyodide
@@ -279,7 +331,6 @@ def emscripten(session: nox.Session, runner: str) -> None:
                 silent=True,
             ),
         ).strip()
-        session.env["PATH"] = f"{Path(driver).parent}:{session.env['PATH']}"
 
         tests_impl(
             session,
@@ -301,7 +352,6 @@ def emscripten(session: nox.Session, runner: str) -> None:
                 silent=True,
             ),
         ).strip()
-        session.env["PATH"] = f"{Path(driver).parent}:{session.env['PATH']}"
 
         tests_impl(
             session,
@@ -320,7 +370,12 @@ def emscripten(session: nox.Session, runner: str) -> None:
 @nox.session(python="3.12")
 def mypy(session: nox.Session) -> None:
     """Run mypy."""
-    session.install("-r", "mypy-requirements.txt")
+    session.install(
+        "--index-url",
+        TIME_MACHINES_INDEX_URL,
+        "-r",
+        "mypy-requirements.txt",
+    )
     session.run("mypy", "--version")
     session.run(
         "mypy",
@@ -337,8 +392,17 @@ def mypy(session: nox.Session) -> None:
 
 @nox.session
 def docs(session: nox.Session) -> None:
-    session.install("-r", "docs/requirements.txt")
-    session.install(".[socks,brotli,zstd]")
+    session.install(
+        "--index-url",
+        TIME_MACHINES_INDEX_URL,
+        "-r",
+        "docs/requirements.txt",
+    )
+    session.install(
+        "--index-url",
+        TIME_MACHINES_INDEX_URL,
+        ".[socks,brotli,zstd]",
+    )
 
     session.chdir("docs")
     if os.path.exists("_build"):
