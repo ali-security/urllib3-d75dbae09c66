@@ -10,6 +10,7 @@ import shutil
 import socket
 import ssl
 import tempfile
+import typing
 from test import LONG_TIMEOUT, SHORT_TIMEOUT, resolvesLocalhostFQDN, withPyOpenSSL
 from test.conftest import ServerConfig
 
@@ -164,6 +165,66 @@ class TestHTTPProxyManager(HypercornDummyProxyTestCase):
 
             r = https.request("GET", f"{self.https_url}/")
             assert r.status == 200
+
+    def test_forwarding_proxy_ssl_context_precedence(self) -> None:
+        """
+        Test that when both ``ssl_context`` and ``proxy_ssl_context``
+        are passed to a forwarding HTTPS proxy, ``proxy_ssl_context`` is
+        used for the proxy connection and ``ssl_context`` is ignored
+        (with a warning). Regression test for GHSA-8988-9cw3-xx77.
+        """
+        ssl_context = create_urllib3_context(cert_reqs=ssl.CERT_REQUIRED)
+        proxy_ssl_context = create_urllib3_context(cert_reqs=ssl.CERT_NONE)
+
+        with pytest.warns(FutureWarning, match="ssl_context"):
+            proxy = proxy_from_url(
+                self.https_proxy_url,
+                proxy_ssl_context=proxy_ssl_context,
+                ssl_context=ssl_context,
+                use_forwarding_for_https=True,
+            )
+
+        with proxy:
+            pool = proxy.connection_from_url(self.https_url)
+            with contextlib.closing(pool._new_conn()) as conn:
+                conn = typing.cast(VerifiedHTTPSConnection, conn)
+                conn.connect()
+                assert isinstance(conn.sock, ssl.SSLSocket)
+                assert conn.sock.context is proxy_ssl_context
+                assert proxy_ssl_context.verify_mode == ssl.CERT_NONE
+
+    @requires_network()
+    def test_forwarding_proxy_ssl_context_fallback(self) -> None:
+        """
+        Test that when only ``ssl_context`` is passed to a forwarding
+        HTTPS proxy, a ``FutureWarning`` is emitted and ``ssl_context``
+        is used as the proxy TLS context (fallback). The proxy's
+        ``ProxyConfig`` carries no explicit context, so the target's TLS
+        policy no longer leaks into the proxy connection.
+        """
+        ssl_context = create_urllib3_context(cert_reqs=ssl.CERT_NONE)
+
+        with pytest.warns(FutureWarning, match="ssl_context"):
+            proxy = proxy_from_url(
+                self.https_proxy_url,
+                ssl_context=ssl_context,
+                cert_reqs=ssl.CERT_REQUIRED,
+                ca_certs=DEFAULT_CA,
+                use_forwarding_for_https=True,
+            )
+
+        assert proxy.proxy_ssl_context is ssl_context
+        assert proxy.proxy_config is not None
+        assert proxy.proxy_config.ssl_context is None
+
+        with proxy:
+            pool = proxy.connection_from_url(self.https_url)
+            with contextlib.closing(pool._new_conn()) as conn:
+                conn = typing.cast(VerifiedHTTPSConnection, conn)
+                conn.connect()
+                assert isinstance(conn.sock, ssl.SSLSocket)
+                assert conn.sock.context is ssl_context
+                assert ssl_context.verify_mode == ssl.CERT_REQUIRED
 
     def test_nagle_proxy(self) -> None:
         """Test that proxy connections do not have TCP_NODELAY turned on"""
@@ -983,6 +1044,11 @@ class TestHTTPSProxyVerification:
         destination_url = f"https://{server.host}:{server.port}"
 
         proxy_ctx = urllib3.util.ssl_.create_urllib3_context()
+        # The proxy_ssl_context now carries the proxy's own cert policy, so the
+        # proxy CA must be loaded into it directly; the pool's ``ca_certs`` (for
+        # the target) no longer leaks into the proxy context. See
+        # GHSA-8988-9cw3-xx77.
+        proxy_ctx.load_verify_locations(proxy.ca_certs)
         try:
             proxy_ctx.hostname_checks_common_name = True
         # PyPy doesn't like us setting 'hostname_checks_common_name'
@@ -993,6 +1059,6 @@ class TestHTTPSProxyVerification:
             pytest.skip("Test requires 'SSLContext.hostname_checks_common_name=True'")
 
         with proxy_from_url(
-            proxy_url, ca_certs=proxy.ca_certs, proxy_ssl_context=proxy_ctx
+            proxy_url, ca_certs=server.ca_certs, proxy_ssl_context=proxy_ctx
         ) as https:
             https.request("GET", destination_url)
